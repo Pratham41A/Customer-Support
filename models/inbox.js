@@ -20,10 +20,7 @@ const inboxSchema = new Schema(
     },
     status: {
       type: String,
-      enum: ['unread', 'read', 'started','resolved'],
-    },
-    isUnread:{
-      type:Boolean
+      enum: ['unread', 'read','resolved'],
     },
     source: {
       type: String,
