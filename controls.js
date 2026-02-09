@@ -92,6 +92,10 @@ exports.updateInbox = async (req, res) => {
       updateData.$set.status = 'started';
     }
 
+    if(status==='unread'){
+      updateData.$set.isUnread=true;  
+      updateData.$set.status='unread';
+    }
     if (status === 'resolved') {
       updateData.$set.status = 'resolved';
       updateData.$set.source = '';
@@ -341,17 +345,16 @@ exports.manageIncomingOutlook = async (req, res) => {
       const messageId = notification.resourceData.id;
       const token = await getOutlookToken();
       const emailTextResponse=await axios.get(
-        `https://graph.microsoft.com/v1.0/users/${email}/messages/${messageId}?$select=from,subject,uniqueBody,internetMessageId,internetMessageHeaders,hasAttachments`,
+        `https://graph.microsoft.com/v1.0/users/${email}/messages/${messageId}?$select=from,subject,body,internetMessageId,internetMessageHeaders,hasAttachments`,
         {
           headers: {
             Authorization: `Bearer ${token}`,
-            Prefer: 'outlook.body-content-type="text"'
-
+            Prefer: 'outlook.body-content-type="html"'
           }
         }
       )
 
-      let {from ,subject ,uniqueBody, internetMessageId, internetMessageHeaders, hasAttachments } = emailTextResponse.data;
+      let {from ,subject ,body, internetMessageId, internetMessageHeaders, hasAttachments } = emailTextResponse.data;
 
       let attachments = [];
 
@@ -441,8 +444,8 @@ inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),
         isSent:false,
         inbox:new mongoose.Types.ObjectId(inbox._id),
         subject,
-        content: {value:uniqueBody.content},
-        contentType:'normal',
+        content: {value:body.content},
+        contentType:'html',
         attachments,
         source: "email",
         messageId,
