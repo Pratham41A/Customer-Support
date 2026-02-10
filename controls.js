@@ -196,14 +196,14 @@ exports.getOutlookSubscriptions = async (req, res) => {
 exports.getSubscriptions = async (req, res) => {
   try {
     const { userId } = req.params;
-    const filter = {userid:new mongoose.Types.ObjectId(userId)};
+    const filter = { userid: new mongoose.Types.ObjectId(userId) };
 
     const subscriptions = await Subscription.find(filter)
-      .populate('packageId', 'subscriptionDurationWeb packageName planType') 
-      .sort({ whenmodified: -1 }) 
+      .populate('packageId')
+      .sort({ whenmodified: -1 })
 
     res.json({
-      count:subscriptions.length,
+      count: subscriptions.length,
       subscriptions
     });
 
@@ -217,11 +217,12 @@ exports.getPayments = async (req, res) => {
     const filter = { userid: new mongoose.Types.ObjectId(userId) };
 
     const payments = await Payment.find(filter)
+    .populate('courseid')
       .sort({ whenmodified: -1 })
 
 
 
-    res.json({  count:payments.length,payments });
+    res.json({ count: payments.length, payments });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -233,36 +234,15 @@ exports.getViews = async (req, res) => {
     const filter = { userid: new mongoose.Types.ObjectId(userId) };
 
     const videoTracks = await VideoTrack.find(filter)
-      .populate('courseid', 'coursename syllabus') 
+      .populate('courseid')
+      .populate('subcourseid')
       .sort({ lastseen: -1 })
 
-    const views = videoTracks.map(track => {
-      let subcoursename = null;
-
-   if (track.courseid?.syllabus?.length) {
-        for (const section of track.courseid.syllabus) {
-          for (const sd of section.sectiondata) {
-            const found = sd.videoid?.toString() === track.subcourseid?.toString();
-            if (found) {
-              subcoursename = sd.videotitle || null;
-              break;
-            }
-          }
-          if (subcoursename) break;
-        }
-      }
-      delete track.courseid?.syllabus;
-      return {
-        ...track,
-        coursename: track.courseid?.coursename || null,
-        subcoursename
-      };
-    });
 
 
     res.json({
-      count:videoTracks.length,
-      views
+      count: videoTracks.length,
+      videoTracks
     });
 
   } catch (err) {
