@@ -29,15 +29,6 @@ const inboxSchema = new Schema(
     whatsappConversationEndDateTime:{
       type:Date
     },
-    resolved: {
-      whatsapp: { type: Number },
-      outlook: { type: Number },
-      web: { type: Number },
-      queryTypes:{
-        type: Map,
-        of: Number
-      }
-    },
     socketId:{
       type:String
     }

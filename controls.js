@@ -22,40 +22,73 @@ exports.root = (req, res)=> {
 exports.getDashboard = async (req, res) => {
   try {
 
-    const inboxes = await Inbox.find({}).lean();
+    const inboxes = await Inbox.aggregate([
+      {
+        $match: {
+          status: { $in: ["read", "unread"] }
+        }
+      },
+      {
+        $group: {
+          _id: "$status",
+          count: { $sum: 1 }
+        }
+      }
+    ]);
 
     const status = {
       read: 0,
-      unread:0,
+      unread: 0,
       resolved: 0
     };
 
-    const sourceResolved = {
-      whatsapp: 0,
-      email: 0,
-      web: 0
-    };
-
-    const queryTypeResolved = {};
-
     for (const inbox of inboxes) {
- if(inbox.status!='resolved'){
-        status[inbox.status]++;
-      }
-    sourceResolved.whatsapp += Number(inbox.resolved?.whatsapp || 0);
-      sourceResolved.email += Number(inbox.resolved?.email || 0);
-      sourceResolved.web += Number(inbox.resolved?.web || 0);
+      status[inbox._id] = inbox.count;
+    }
 
-      if (inbox.resolved?.queryTypes) {
-        for (const [key, value] of Object.entries(inbox.resolved.queryTypes)) {
-          if (queryTypeResolved[key] === undefined) {
-      queryTypeResolved[key] = 0;
-      }
-    queryTypeResolved[key] +=  Number(value);
+
+    const channelAgg = await DailyResolution.aggregate([
+      {
+        $group: {
+          _id: null,
+          whatsapp: { $sum: "$channels.whatsapp" },
+          email: { $sum: "$channels.email" },
+          web: { $sum: "$channels.web" }
         }
       }
+    ]);
+
+    const sourceResolved = {
+      whatsapp: channelAgg[0]?.whatsapp || 0,
+      email: channelAgg[0]?.email || 0,
+      web: channelAgg[0]?.web || 0
+    };
+
+    const queryTypes = await DailyResolution.aggregate([
+      {
+        $project: {
+          queryTypes: { $objectToArray: "$queryTypes" }
+        }
+      },
+      { $unwind: "$queryTypes" },
+      {
+        $group: {
+          _id: "$queryTypes.k",
+          count: { $sum: "$queryTypes.v" }
+        }
+      }
+    ]);
+
+    const queryTypeResolved = {};
+    for (const qt of queryTypes) {
+      queryTypeResolved[qt._id] = qt.count;
     }
-      status['resolved']=sourceResolved.whatsapp+sourceResolved.email+sourceResolved.web
+
+    status.resolved =
+      sourceResolved.whatsapp +
+      sourceResolved.email +
+      sourceResolved.web;
+
     return res.json({
       ...status,
       ...sourceResolved,
@@ -66,56 +99,73 @@ exports.getDashboard = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
 exports.updateInbox = async (req, res) => {
   try {
     const { inboxId, status, queryType } = req.body;
 
     const inbox = await Inbox.findById(inboxId);
-    const updateData = {
-      $set: {},
-      $inc: {}
-    };
 
-    if (status === 'read') {
-      if (inbox.status === 'unread') {
-        updateData.$set.status = 'read';
-      }
+    const updateData = {};
+    const setData = {};
+
+    if (status === "read" && inbox.status === "unread") {
+      setData.status = "read";
     }
 
-    if(status==='unread'){ 
-      updateData.$set.status='unread';
+    if (status === "unread") {
+      setData.status = "unread";
     }
-    if (status === 'resolved') {
-      updateData.$set.status = 'resolved';
-      updateData.$set.source = '';
 
-      if (queryType) {
-       
-  updateData.$inc[`resolved.${inbox.source}`] = 1;
-        updateData.$inc[`resolved.queryTypes.${queryType}`] = 1;
+
+    if (status === "resolved" && inbox.status !== "resolved") {
+
+      setData.status = "resolved";
+      setData.source = "";
+
+
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+
+      const incData = {};
+
+        incData[`channels.${inbox.source}`] = 1;
+
+        incData[`queryTypes.${queryType}`] = 1;
 
         await QueryType.findOneAndUpdate(
           { name: queryType },
           { $setOnInsert: { name: queryType } },
           { upsert: true }
         );
-      }
+
+      await DailyResolution.findOneAndUpdate(
+        { date: today },
+        {
+          $setOnInsert: { date: today },
+          $inc: incData
+        },
+        { upsert: true }
+      );
     }
 
-    if (!Object.keys(updateData.$set).length) delete updateData.$set;
-    if (!Object.keys(updateData.$inc).length) delete updateData.$inc;
+    if (Object.keys(setData).length) {
+      updateData.$set = setData;
+    }
 
- await Inbox.findByIdAndUpdate(
+    const updatedInbox = await Inbox.findByIdAndUpdate(
       inboxId,
       updateData,
-    );
-const updatedInbox = await Inbox.findById(inboxId).populate('owner dummyOwner');
+      { new: true }
+    ).populate("owner dummyOwner");
+
     return res.status(200).json(updatedInbox);
 
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
 };
+
 exports.getOutlookSubscriptions = async (req, res) => {
   try {
     const token = await getOutlookToken();
