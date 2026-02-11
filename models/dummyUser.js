@@ -10,6 +10,9 @@ const dummyUserSchema = new Schema(
     mobileno:{
       type:String,
     },
+    countrycode:{
+      type:String
+    },
     email:{
       type:String,
     }

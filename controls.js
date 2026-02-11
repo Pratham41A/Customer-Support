@@ -11,12 +11,17 @@ const {Inbox} = require("./models/inbox.js");
 const {Message} = require("./models/message.js");
 const {Activity} = require("./models/activity.js");
 const {QueryType} = require("./models/queryType.js");
+const {DailyResolution} = require("./models/dailyResolution.js");
+const { parsePhoneNumber } = require("libphonenumber-js");
 
-const { getIo } = require("./io.js"); 
-const { getOutlookToken,uploadToS3,downloadWhatsappMedia, generateWhatsappTemplatePayload, extractParams } = require("./services.js"); 
 
 
-exports.root = (req, res)=> {
+//const { getIo } = require("./io.js");
+const io = require("socket.io")();
+const { getOutlookToken, uploadToS3, downloadWhatsappMedia, generateWhatsappTemplatePayload, extractParams } = require("./services.js");
+
+
+exports.root = (req, res) => {
   return res.status(200).json("Om Ganeshay Namah");
 };
 exports.getDashboard = async (req, res) => {
@@ -118,10 +123,11 @@ exports.updateInbox = async (req, res) => {
     }
 
 
-    if (status === "resolved" && inbox.status !== "resolved") {
+    if (status === "resolved") {
 
       setData.status = "resolved";
       setData.source = "";
+      setData.queryType=queryType
 
 
       const today = new Date();
@@ -165,7 +171,6 @@ exports.updateInbox = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
-
 exports.getOutlookSubscriptions = async (req, res) => {
   try {
     const token = await getOutlookToken();
@@ -255,9 +260,9 @@ exports.getActivities = async (req, res) => {
     const filter = { inbox: new mongoose.Types.ObjectId(inboxId) };
 
     const activities = await Activity.find(filter)
-      .sort({ createdAt: -1 })  
+      .sort({ createdAt: -1 })
 
-    res.json({ count:activities.length,activities  });
+    res.json({ count: activities.length, activities });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -268,10 +273,10 @@ exports.getInboxes = async (req, res) => {
     const filter = status ? { status } : {};
 
     const inboxes = await Inbox.find(filter)
-      .populate('owner') 
+      .populate('owner')
       .populate('dummyOwner')
-      .sort({ inboxDateTime : -1 })
-    res.json({ count:inboxes.length,inboxes  });
+      .sort({ inboxDateTime: -1 })
+    res.json({ count: inboxes.length, inboxes });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -282,10 +287,10 @@ exports.getQueryTypes = async (req, res) => {
     const filter = {};
 
     const queryTypes = await QueryType.find(filter)
-      .sort({ createdAt: -1 }) 
+      .sort({ createdAt: -1 })
 
     res.json({
-      count:queryTypes.length,
+      count: queryTypes.length,
       queryTypes
     });
 
@@ -303,24 +308,24 @@ exports.createActivity = async (req, res) => {
       dueDate: new Date(dueDate)
     });
 
-    res.status(201).json(activity); 
-    } catch (err) {
+    res.status(201).json(activity);
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 };
 exports.getMessages = async (req, res) => {
   try {
     const { inboxId } = req.params;
-    const {source}=req.query
-    const filter={inbox: new mongoose.Types.ObjectId(inboxId)}
-    if(source){
-      filter.source=source
+    const { source } = req.query
+    const filter = { inbox: new mongoose.Types.ObjectId(inboxId) }
+    if (source) {
+      filter.source = source
     }
     const messages = await Message.find(filter)
       .populate('inReplyTo')
-      .sort({ messageDateTime: -1 }) 
+      .sort({ messageDateTime: -1 })
     res.json({
-      count:messages.length,
+      count: messages.length,
       messages
     });
 
@@ -328,16 +333,16 @@ exports.getMessages = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-exports.createQueryType=async (req,res)=>{
- try {
+exports.createQueryType = async (req, res) => {
+  try {
     const { name } = req.body;
 
     const queryType = await QueryType.create({
       name
     });
 
-    res.status(201).json(queryType); 
-    } catch (err) {
+    res.status(201).json(queryType);
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 }
@@ -351,7 +356,7 @@ exports.manageIncomingOutlook = async (req, res) => {
   if (!req.body.value || !Array.isArray(req.body.value)) return;
 
   try {
-    const io = getIo();
+   // const io = getIo();
     const notifications = req.body.value;
 
     for (const notification of notifications) {
@@ -485,7 +490,7 @@ inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),
 }
 exports.manageOutgoingNewOutlook = async (req, res) => {
   try {
-    const io=getIo()
+    //const io=getIo()
     const { email, subject, htmlBody } = req.body;
 
     const token = await getOutlookToken();
@@ -583,9 +588,13 @@ inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),
 }
 exports.manageOutgoingReplyOutlook = async (req, res) => {
   try {
-    const io=getIo()
+    //const io=getIo()
     const { replyMessageId, htmlBody, email } = req.body;
         
+      let inReplyToMessage = null;
+          inReplyToMessage = await Message.findOne({
+            messageId:replyMessageId
+          });
     const token = await getOutlookToken();
      
     const draftResponse = await axios.post(
@@ -620,7 +629,7 @@ exports.manageOutgoingReplyOutlook = async (req, res) => {
       if(user){
       inbox=await Inbox.findOne({owner:new mongoose.Types.ObjectId(user._id)})
        if(inbox){
-         inbox.preview={value:`Subject: ${subject}`}
+         inbox.preview={value:`Subject: ${inReplyToMessage.subject}`}
          inbox.contentType='normal'
 
         await inbox.save()
@@ -632,17 +641,13 @@ exports.manageOutgoingReplyOutlook = async (req, res) => {
         if(dummyUser){
   inbox=await Inbox.findOne({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id)})
        if(inbox){
-         inbox.preview={value:`Subject: ${subject}`}
+         inbox.preview={value:`Subject: ${inReplyToMessage.subject}`}
          inbox.contentType='normal'
         await inbox.save()
        }
       }
       }
 
-      let inReplyToMessage = null;
-          inReplyToMessage = await Message.findOne({
-            messageId:replyMessageId
-          });
 
       var message = await Message.create({
         isSent:true,
@@ -670,14 +675,19 @@ exports.manageIncomingWhatsapp = async (req, res) => {
   res.sendStatus(200);
 
   try {
-    const io = getIo();
+   // const io = getIo();
     const entries = req.body?.entry || [];
 
     for (const entry of entries) {
       for (const change of entry.changes || []) {
 
         for (const whatsapp of change.value?.messages || []) {
-          const mobile = whatsapp.from;
+          const raw = whatsapp.from.startsWith("+")
+                      ? whatsapp.from
+                      : `+${whatsapp.from}`;
+          const phone = parsePhoneNumber(raw);
+          const countrycode = phone.countryCallingCode;
+          const mobile = phone.nationalNumber;  
 
           let body = "";
           let attachments = [];
@@ -711,7 +721,7 @@ exports.manageIncomingWhatsapp = async (req, res) => {
             }
           }
 
-const user=await User.findOne({mobileno:mobile})
+const user=await User.findOne({mobileno:mobile,countrycode:{$in:[countrycode,`+${countrycode}`]}})
  var inbox
       if(user){
       inbox=await Inbox.findOne({owner:new mongoose.Types.ObjectId(user._id)})
@@ -734,7 +744,7 @@ const user=await User.findOne({mobileno:mobile})
     }
       else{
 
-        var dummyUser=await DummyUser.findOne({mobileno:mobile})
+        var dummyUser=await DummyUser.findOne({mobileno:mobile,countrycode})
         if(dummyUser){
  inbox=await Inbox.findOne({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id)})
        if(inbox){
@@ -755,7 +765,7 @@ const user=await User.findOne({mobileno:mobile})
       }
         }
         else{
-        dummyUser=await DummyUser.create({name:mobile,mobileno:mobile})
+        dummyUser=await DummyUser.create({name:mobile,mobileno:mobile,countrycode})
 inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'unread',source:'whatsapp',whatsappConversationEndDateTime:new Date(Date.now()+1000*60*60*24)})        
         }
       }
@@ -783,13 +793,19 @@ inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),
 };
 exports.manageOutgoingNewWhatsapp = async (req, res) => {
   try {
-    const io=getIo()
-    const { mobile, body } = req.body;
+    //const io=getIo()
+    var { mobile, body } = req.body;
+ const raw = mobile.startsWith("+")
+                      ? mobile
+                      : `+${mobile}`;
+          const phone = parsePhoneNumber(raw);
+          const countrycode = phone.countryCallingCode;
+          var mobile = phone.nationalNumber;  
 
     const payload = {
       messaging_product: "whatsapp",
       recipient_type: "individual",
-      to: mobile,
+      to: `${countrycode}${mobile}`,
       type: "text",
       text: { body }
     };
@@ -800,8 +816,7 @@ exports.manageOutgoingNewWhatsapp = async (req, res) => {
         "D360-API-KEY": process.env.D360_API_KEY,
       },
     });
-
-   const user=await User.findOne({mobileno:mobile})
+const user=await User.findOne({mobileno:mobile,countrycode:{$in:[countrycode,`+${countrycode}`]}})
  var inbox
       if(user){
       inbox=await Inbox.findOne({owner:new mongoose.Types.ObjectId(user._id)})
@@ -823,7 +838,7 @@ exports.manageOutgoingNewWhatsapp = async (req, res) => {
     }
       else{
 
-        var dummyUser=await DummyUser.findOne({mobileno:mobile})
+        var dummyUser=await DummyUser.findOne({mobileno:mobile,countrycode})
         if(dummyUser){
   inbox=await Inbox.findOne({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id)})
 if(inbox){
@@ -842,7 +857,7 @@ if(inbox){
       }
       }
       else{
-                dummyUser=await DummyUser.create({name:mobile,mobileno:mobile})
+                dummyUser=await DummyUser.create({name:mobile,mobileno:mobile,countrycode})
 inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'read',source:'whatsapp'})        
       }
       }
@@ -868,15 +883,20 @@ inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),
 }
 exports.manageOutgoingTemplateWhatsapp = async (req, res) => {
   try {
-    const io=getIo()
-    const { mobile, template } = req.body;
-
+    //const io=getIo()
+    var { mobile, template } = req.body;
+ const raw = mobile.startsWith("+")
+                      ? mobile
+                      : `+${mobile}`;
+          const phone = parsePhoneNumber(raw);
+          const countrycode = phone.countryCallingCode;
+          var mobile = phone.nationalNumber; 
 const components=generateWhatsappTemplatePayload(template)
 
     const payload = {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
-      to: mobile,
+      to: `${countrycode}${mobile}`,
       type: 'template',
       template: {
         name: template.name,
@@ -893,7 +913,7 @@ const components=generateWhatsappTemplatePayload(template)
       }
     });
 
-   const user=await User.findOne({mobileno:mobile})
+const user=await User.findOne({mobileno:mobile,countrycode:{$in:[countrycode,`+${countrycode}`]}})
  var inbox
       if(user){
       inbox=await Inbox.findOne({owner:new mongoose.Types.ObjectId(user._id)})
@@ -915,7 +935,7 @@ const components=generateWhatsappTemplatePayload(template)
     }
       else{
 
-        var dummyUser=await DummyUser.findOne({mobileno:mobile})
+        var dummyUser=await DummyUser.findOne({mobileno:mobile,countrycode})
         if(dummyUser){
   inbox=await Inbox.findOne({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id)})
 if(inbox){
@@ -935,7 +955,7 @@ if(inbox){
       }
       }
       else{
-                dummyUser=await DummyUser.create({name:mobile,mobileno:mobile})
+                dummyUser=await DummyUser.create({name:mobile,mobileno:mobile,countrycode})
 inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:`Template: ${template.name}`},contentType:'normal',status:'read',source:'whatsapp'})        
       }
       }
@@ -980,7 +1000,7 @@ exports.getWhatsappTemplates = async (req, res) => {
 
     const formattedTemplates = filteredTemplates.map(template => {
       const components = [];
-      const allParameters = new Map(); 
+      const allParameters = new Map();
 
       template.components.forEach(component => {
         // BODY
