@@ -27,16 +27,32 @@ exports.root = (req, res) => {
 exports.getDashboard = async (req, res) => {
   try {
 
-    const inboxes = await Inbox.aggregate([
+    const inboxAgg = await Inbox.aggregate([
       {
-        $match: {
-          status: { $in: ["read", "unread"] }
-        }
-      },
-      {
-        $group: {
-          _id: "$status",
-          count: { $sum: 1 }
+        //Run Multiple Aggregations in Parallel
+        $facet: {
+          whatsappCounts: [
+            {
+              $match: {
+                whatsappStatus: { $in: ["read", "unread"] }
+              }
+            },
+            {
+              $group: {
+                _id: "$whatsappStatus",
+                count: { $sum: 1 }
+              }
+            }
+          ],
+          totalCounts: [
+            {
+              $group: {
+                _id: null,
+                read: { $sum: "$total.read" },
+                unread: { $sum: "$total.unread" }
+              }
+            }
+          ]
         }
       }
     ]);
@@ -47,11 +63,17 @@ exports.getDashboard = async (req, res) => {
       resolved: 0
     };
 
-    for (const inbox of inboxes) {
-      status[inbox._id] = inbox.count;
-    }
+//whatsappStatus
+    inboxAgg[0].whatsappCounts.forEach(item => {
+      status[item._id] += item.count;
+    });
 
+    // total.read & total.unread
+    const totals = inboxAgg[0].totalCounts[0] || { read: 0, unread: 0 };
+    status.read += totals.read;
+    status.unread += totals.unread;
 
+    //resolution
     const channelAgg = await DailyResolution.aggregate([
       {
         $group: {
@@ -68,6 +90,11 @@ exports.getDashboard = async (req, res) => {
       email: channelAgg[0]?.email || 0,
       web: channelAgg[0]?.web || 0
     };
+
+    status.resolved =
+      sourceResolved.whatsapp +
+      sourceResolved.email +
+      sourceResolved.web;
 
     const queryTypes = await DailyResolution.aggregate([
       {
@@ -89,11 +116,6 @@ exports.getDashboard = async (req, res) => {
       queryTypeResolved[qt._id] = qt.count;
     }
 
-    status.resolved =
-      sourceResolved.whatsapp +
-      sourceResolved.email +
-      sourceResolved.web;
-
     return res.json({
       ...status,
       ...sourceResolved,
@@ -104,6 +126,7 @@ exports.getDashboard = async (req, res) => {
     return res.status(500).json({ error: error.message });
   }
 };
+
 
 exports.updateInbox = async (req, res) => {
   try {
