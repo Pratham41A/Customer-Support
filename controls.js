@@ -107,45 +107,56 @@ exports.getDashboard = async (req, res) => {
 
 exports.updateInbox = async (req, res) => {
   try {
-    const { inboxId, status, queryType } = req.body;
+    const { inboxId, messageId, status, queryType } = req.body;
 
-    const inbox = await Inbox.findById(inboxId);
+if(messageId){
 
-    const updateData = {};
-    const setData = {};
-
-    if (status === "read" && inbox.status === "unread") {
-      setData.status = "read";
-    }
-
-    if (status === "unread") {
-      setData.status = "unread";
-    }
-
-
-    if (status === "resolved") {
-
-      setData.status = "resolved";
-      setData.source = "";
-      setData.queryType=queryType
-
-
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-
-      const incData = {};
-
-        incData[`channels.${inbox.source}`] = 1;
-
-        incData[`queryTypes.${queryType}`] = 1;
-
+if(status === "read"){  
+  const message=await Message.findById(new mongoose.Types.ObjectId(messageId));
+  message.status="read";
+  const inbox=await Inbox.findById(new mongoose.Types.ObjectId(inboxId));
+if(inbox.total.unread===1 && inbox.whatsappStatus!=='unread'){
+  inbox.status="read";  
+}
+inbox.total.unread-=1
+inbox.total.read+=1
+  await message.save();
+  await inbox.save()
+}
+else if(status==='unread'){
+   const message=await Message.findById(new mongoose.Types.ObjectId(messageId));
+   message.status='unread'
+    const inbox=await Inbox.findById(new mongoose.Types.ObjectId(inboxId));
+    inbox.total.read-=1
+    inbox.total.unread+=1
+    inbox.status='unread'
+    await message.save();
+    await inbox.save()
+}
+else if(status === "resolved"){
+  const message=await Message.findById(messageId);
+  message.status="resolved";
+  message.queryType=queryType;
+  await message.save();
+const inbox=await Inbox.findById(new mongoose.Types.ObjectId(inboxId));
+  if(inbox.total.read===1 && inbox.total.unread===0 && inbox.whatsappStatus==='resolved'){
+inbox.status='resolved'
+inbox.queryType=queryType
+  }
+  inbox.total.read-=1
         await QueryType.findOneAndUpdate(
           { name: queryType },
           { $setOnInsert: { name: queryType } },
           { upsert: true }
         );
+   const today = new Date();
+      today.setHours(0, 0, 0, 0);
+       const incData = {};
 
-      await DailyResolution.findOneAndUpdate(
+        incData[`channels.email`] = 1;
+
+        incData[`queryTypes.${queryType}`] = 1;
+         await DailyResolution.findOneAndUpdate(
         { date: today },
         {
           $setOnInsert: { date: today },
@@ -153,19 +164,65 @@ exports.updateInbox = async (req, res) => {
         },
         { upsert: true }
       );
-    }
+}
+else if(status==="ignore"){
+  await Message.updateOne(
+  { _id: messageId },
+  { $unset: { status: "" } }
+);
+if(inbox.total.unread===1 && inbox.total.read>0 && inbox.whatsappStatus!=='unread'){
+inbox.status='read'
+}
+else if(inbox.total.unread===1 && inbox.total.read===0 ){
+inbox.status=inbox.whatsappStatus
+}
+inbox.total.unread-=1
+await inbox.save()
+}
+}
+else if(inboxId){
+if(status==='unread'){
+const inbox=await Inbox.findById(new mongoose.Types.ObjectId(inboxId));
+  inbox.whatsappStatus='unread'
+    inbox.status='unread'
+  }
+else if(status==='read'){
+const inbox=await Inbox.findById(new mongoose.Types.ObjectId(inboxId));
+  inbox.whatsappStatus='read'
+  if(inbox.total.unread===0 ){
+    inbox.status='read'
+  }
+}
+else if(status==='resolved'){
+const inbox=await Inbox.findById(new mongoose.Types.ObjectId(inboxId));
+  inbox.whatsappStatus='resolved'
+  if(inbox.total.unread===0 && inbox.total.read===0){
+    inbox.status='resolved'
+  }
+  inbox.queryType=queryType
+await QueryType.findOneAndUpdate(
+          { name: queryType },
+          { $setOnInsert: { name: queryType } },
+          { upsert: true }
+        );
+   const today = new Date();
+      today.setHours(0, 0, 0, 0);
+       const incData = {};
 
-    if (Object.keys(setData).length) {
-      updateData.$set = setData;
-    }
+        incData[`channels.whatsapp`] = 1;
 
-    const updatedInbox = await Inbox.findByIdAndUpdate(
-      inboxId,
-      updateData,
-      { new: true }
-    ).populate("owner dummyOwner");
-
-    return res.status(200).json(updatedInbox);
+        incData[`queryTypes.${queryType}`] = 1;
+         await DailyResolution.findOneAndUpdate(
+        { date: today },
+        {
+          $setOnInsert: { date: today },
+          $inc: incData
+        },
+        { upsert: true }
+      );
+}
+}
+    return res.sendStatus(200);
 
   } catch (error) {
     return res.status(500).json({ error: error.message });
@@ -412,19 +469,17 @@ exports.manageIncomingOutlook = async (req, res) => {
       if(user){
       inbox=await Inbox.findOne({owner:new mongoose.Types.ObjectId(user._id)})
        if(inbox){
-
-          inbox.status='unread'
-        
         if(!inbox.source){
           inbox.source='email'
         }
         inbox.preview={value:`Subject: ${subject}`}
         inbox.contentType='normal'
-
+         inbox.status='unread'
+        inbox.total.unread+=1
         await inbox.save()
        }
        else{
-        inbox=await Inbox.create({owner:new mongoose.Types.ObjectId(user._id),preview:{value:`Subject: ${subject}`},contentType:'normal',status:'unread',source:'email'})        
+        inbox=await Inbox.create({owner:new mongoose.Types.ObjectId(user._id),preview:{value:`Subject: ${subject}`},contentType:'normal',status:'unread',source:'email',total:{unread:1}})        
       }
     }
       else{
@@ -432,24 +487,22 @@ exports.manageIncomingOutlook = async (req, res) => {
         if(dummyUser){
  inbox=await Inbox.findOne({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id)})
        if(inbox){
-   
-          inbox.status='unread'
-        
-        if(!inbox.source){
+      if(!inbox.source){
           inbox.source='email'
         }
         inbox.preview={value:`Subject: ${subject}`}
         inbox.contentType='normal'
-        
+     inbox.status='unread'
+        inbox.total.unread+=1
         await inbox.save()
        }
        else{
-        inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:`Subject: ${subject}`},contentType:'normal',status:'unread',source:'email'})         
+        inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:`Subject: ${subject}`},contentType:'normal',status:'unread',source:'email',total:{unread:1}})         
       }
         }
         else{
         dummyUser=await DummyUser.create({name:from.emailAddress.address,email:from.emailAddress.address})
-inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:`Subject: ${subject}`},contentType:'normal',status:'unread',source:'email'})        
+inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:`Subject: ${subject}`},contentType:'normal',status:'unread',source:'email',total:{unread:1}})        
      
         }
       }
@@ -474,7 +527,8 @@ inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),
         source: "email",
         messageId,
         internetMessageId,
-        inReplyTo: inReplyToMessage ? new mongoose.Types.ObjectId(inReplyToMessage._id) : null
+        inReplyTo: inReplyToMessage ? new mongoose.Types.ObjectId(inReplyToMessage._id) : null,
+        status:'unread'
       });
 
       message=await Message.findById(new mongoose.Types.ObjectId(message._id)).populate('inReplyTo').populate('inbox')
@@ -631,7 +685,9 @@ exports.manageOutgoingReplyOutlook = async (req, res) => {
        if(inbox){
          inbox.preview={value:`Subject: ${inReplyToMessage.subject}`}
          inbox.contentType='normal'
-
+        if(inbox.status=='resolved'){
+        inbox.status='read'         
+        }
         await inbox.save()
        }
     }
@@ -643,6 +699,9 @@ exports.manageOutgoingReplyOutlook = async (req, res) => {
        if(inbox){
          inbox.preview={value:`Subject: ${inReplyToMessage.subject}`}
          inbox.contentType='normal'
+                 if(inbox.status=='resolved'){
+        inbox.status='read'         
+        }
         await inbox.save()
        }
       }
@@ -726,20 +785,18 @@ const user=await User.findOne({mobileno:mobile,countrycode:{$in:[countrycode,`+$
       if(user){
       inbox=await Inbox.findOne({owner:new mongoose.Types.ObjectId(user._id)})
        if(inbox){
-
-          inbox.status='unread'
-        
+          inbox.status="unread"
+          inbox.whatsappStatus='unread'
         if(!inbox.source){
           inbox.source='whatsapp'
         }
         inbox.whatsappConversationEndDateTime=new Date(Date.now()+1000*60*60*24)
         inbox.preview={value:body}
         inbox.contentType='special'
-
         await inbox.save()
        }
        else{
-        inbox=await Inbox.create({owner:new mongoose.Types.ObjectId(user._id),preview:{value:body},contentType:'special',status:'unread',source:'whatsapp',whatsappConversationEndDateTime:new Date(Date.now()+1000*60*60*24)})        
+        inbox=await Inbox.create({owner:new mongoose.Types.ObjectId(user._id),preview:{value:body},contentType:'special',status:'unread',whatsappStatus:'unread',source:'whatsapp',whatsappConversationEndDateTime:new Date(Date.now()+1000*60*60*24)})        
       }
     }
       else{
@@ -747,9 +804,9 @@ const user=await User.findOne({mobileno:mobile,countrycode:{$in:[countrycode,`+$
         var dummyUser=await DummyUser.findOne({mobileno:mobile,countrycode})
         if(dummyUser){
  inbox=await Inbox.findOne({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id)})
-       if(inbox){
-  
-          inbox.status='unread'
+       if(inbox){  
+          inbox.whatsappStatus='unread'
+          inbox.status="unread"
         
         if(!inbox.source){
           inbox.source='whatsapp'
@@ -761,12 +818,12 @@ const user=await User.findOne({mobileno:mobile,countrycode:{$in:[countrycode,`+$
         await inbox.save()
         }
        else{
-        inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'unread',source:'whatsapp',whatsappConversationEndDateTime:new Date(Date.now()+1000*60*60*24)})        
+        inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'unread',whatsappStatus:'unread',source:'whatsapp',whatsappConversationEndDateTime:new Date(Date.now()+1000*60*60*24)})        
       }
         }
         else{
         dummyUser=await DummyUser.create({name:mobile,mobileno:mobile,countrycode})
-inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'unread',source:'whatsapp',whatsappConversationEndDateTime:new Date(Date.now()+1000*60*60*24)})        
+inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'unread',whatsappStatus:'unread',source:'whatsapp',whatsappConversationEndDateTime:new Date(Date.now()+1000*60*60*24)})        
         }
       }
 
@@ -824,16 +881,21 @@ const user=await User.findOne({mobileno:mobile,countrycode:{$in:[countrycode,`+$
         if(!inbox.source){
           inbox.source='whatsapp'
         }
+
         if(inbox.status=='resolved'){
-        inbox.status='read'         
+        inbox.status='read'       
+        if(inbox.whatsappStatus='resolved') { 
+        inbox.whatsappStatus='read'
         }
+      }
+      
         inbox.preview={value:body}
          inbox.contentType='special'
          
         await inbox.save()
        }
        else{
-        inbox=await Inbox.create({owner:new mongoose.Types.ObjectId(user._id),preview:{value:body},contentType:'special',status:'read',source:'whatsapp'})        
+        inbox=await Inbox.create({owner:new mongoose.Types.ObjectId(user._id),preview:{value:body},contentType:'special',status:'read',source:'whatsapp',whatsappStatus:'read'})        
       }
     }
       else{
@@ -845,20 +907,24 @@ if(inbox){
         if(!inbox.source){
           inbox.source='whatsapp'
         }
-        if(inbox.status=='resolved'){
-        inbox.status='read'         
+         if(inbox.status=='resolved'){
+        inbox.status='read'       
+        if(inbox.whatsappStatus='resolved') { 
+        inbox.whatsappStatus='read'
         }
+      }
+       
         inbox.preview={value:body}
         inbox.contentType='special'
         await inbox.save()
        }
        else{
-        inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'read',source:'whatsapp'})        
+        inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'read',source:'whatsapp',whatsappStatus:'read'})        
       }
       }
       else{
                 dummyUser=await DummyUser.create({name:mobile,mobileno:mobile,countrycode})
-inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'read',source:'whatsapp'})        
+inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:body},contentType:'special',status:'read',source:'whatsapp',whatsappStatus:'read'})        
       }
       }
      
@@ -921,16 +987,19 @@ const user=await User.findOne({mobileno:mobile,countrycode:{$in:[countrycode,`+$
         if(!inbox.source){
           inbox.source='whatsapp'
         }
-        if(inbox.status=='resolved'){
-        inbox.status='read'         
+ if(inbox.status=='resolved'){
+        inbox.status='read'       
+        if(inbox.whatsappStatus='resolved') { 
+        inbox.whatsappStatus='read'
         }
-
+      }
+ 
         inbox.preview={value:`Template: ${template.name}`}
          inbox.contentType='normal'
         await inbox.save()
        }
        else{
-        inbox=await Inbox.create({owner:new mongoose.Types.ObjectId(user._id),preview:{value:`Template: ${template.name}`},contentType:'normal',status:'read',source:'whatsapp'})        
+        inbox=await Inbox.create({owner:new mongoose.Types.ObjectId(user._id),preview:{value:`Template: ${template.name}`},contentType:'normal',status:'read',source:'whatsapp',whatsappStatus:'read'})        
       }
     }
       else{
@@ -943,20 +1012,23 @@ if(inbox){
           inbox.source='whatsapp'
         }
         if(inbox.status=='resolved'){
-        inbox.status='read'         
+        inbox.status='read'       
+        if(inbox.whatsappStatus='resolved') { 
+        inbox.whatsappStatus='read'
         }
+      }
         inbox.preview={value:`Template: ${template.name}`}
         inbox.contentType='normal'
   
         await inbox.save()
        }
        else{
-        inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:`Template: ${template.name}`},contentType:'normal',status:'read',source:'whatsapp'})        
+        inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:`Template: ${template.name}`},contentType:'normal',status:'read',source:'whatsapp',whatsappStatus:'read'})        
       }
       }
       else{
                 dummyUser=await DummyUser.create({name:mobile,mobileno:mobile,countrycode})
-inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:`Template: ${template.name}`},contentType:'normal',status:'read',source:'whatsapp'})        
+inbox=await Inbox.create({dummyOwner:new mongoose.Types.ObjectId(dummyUser._id),preview:{value:`Template: ${template.name}`},contentType:'normal',status:'read',source:'whatsapp',whatsappStatus:'read'})        
       }
       }
      

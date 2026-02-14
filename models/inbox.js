@@ -34,7 +34,21 @@ const inboxSchema = new Schema(
     },
     socketId:{
       type:String
+    },
+    total: {
+    read: {
+      type: Number,
+      default: 0
+    },
+    unread: {
+      type: Number,
+      default: 0  
     }
+  },
+  whatsappStatus:{
+    type:String,
+    enum:["unread","read","resolved"]
+  }
   },
   {
     timestamps: true, 

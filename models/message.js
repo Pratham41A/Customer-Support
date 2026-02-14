@@ -41,6 +41,13 @@ const messageSchema = new Schema(
     },
     messageId: {
       type: String
+    },
+    queryType:{
+      type:String
+    },
+    status:{
+      type:String,
+      enum:["read","unread","resolved"]
     }
   },
 
